@@ -9,7 +9,7 @@ DIM='\033[2m'
 RESET='\033[0m'
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
+INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/src}"
 LIB_DIR="$HOME/.local/lib/securekeys"
 
 echo -e "\n${BOLD}${CYAN}SecureKeys Installer${RESET}\n"
@@ -27,7 +27,7 @@ chmod 644 "$LIB_DIR/crypto.sh"
 
 mkdir -p "$INSTALL_DIR"
 sed "s|source \"\$SCRIPT_DIR/../lib/crypto.sh\"|source \"$LIB_DIR/crypto.sh\"|g" \
-  "$REPO_DIR/bin/sk" >"$INSTALL_DIR/sk"
+  "$REPO_DIR/src/sk" >"$INSTALL_DIR/sk"
 chmod 755 "$INSTALL_DIR/sk"
 
 if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then

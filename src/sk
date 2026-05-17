@@ -1,0 +1,341 @@
+#!/usr/bin/env bash
+# sk — SecureKeys CLI
+# Manage encrypted API keys / secrets stored in an AES-256 vault
+#
+# Usage:
+#   sk init                    Create a new encrypted vault
+#   sk add <NAME> [value]      Add or update a secret
+#   sk get <NAME>              Print a single secret (decrypted)
+#   sk list                    List all secret names (no values shown)
+#   sk remove <NAME>           Delete a secret from the vault
+#   sk export                  Print all secrets as export statements
+#   sk shell-init              Print the path to the env-loader (for .zshrc)
+#   sk load                    Load all secrets into current shell session
+#   sk rotate                  Re-encrypt the vault with a new master password
+#   sk destroy                 Permanently delete the vault
+#   sk status                  Show vault info
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../lib/crypto.sh"
+
+#Commands
+
+cmd_init() {
+  sk_init_vault
+}
+
+cmd_add() {
+  local name="${1:-}"
+  local value="${2:-}"
+
+  [[ -z "$name" ]] && {
+    echo -e "${RED}[ERROR]${RESET} Usage: sk add <NAME> [value]" >&2
+    return 1
+  }
+
+  # Validate key name
+  if [[ ! "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+    echo -e "${RED}[ERROR]${RESET} Key name must be a valid shell variable (letters, digits, underscores)." >&2
+    return 1
+  fi
+
+  # Prompt for value if not provided
+  if [[ -z "$value" ]]; then
+    echo -e "${BOLD}Value for %s: ${RESET}" "$name" >&2
+    read -rs value
+    printf "\n" >&2
+  fi
+
+  local password
+  password=$(_sk_prompt_password "Master password: ")
+
+  local vault_json
+  vault_json=$(_sk_read_vault "$password") || return 1
+
+  local updated
+  updated=$(_json_set "$vault_json" "$name" "$value")
+  _sk_write_vault "$password" "$updated"
+
+  echo -e "${GREEN}[OK]${RESET} Secret ${BOLD}$name${RESET} saved."
+}
+
+cmd_get() {
+  local name="${1:-}"
+  [[ -z "$name" ]] && {
+    echo -e "${RED}[ERROR]${RESET} Usage: sk get <NAME>" >&2
+    return 1
+  }
+
+  local password
+  password=$(_sk_prompt_password "Master password: ")
+
+  local vault_json
+  vault_json=$(_sk_read_vault "$password") || return 1
+
+  local value
+  value=$(_json_get "$vault_json" "$name")
+
+  if [[ -z "$value" ]]; then
+    echo -e "${RED}[ERROR]${RESET} Key '${name}' not found in vault." >&2
+    return 1
+  fi
+
+  if command -v pbcopy >/dev/null 2>&1; then
+    # echo -n ensures we don't copy a trailing newline character
+    echo -n "$value" | pbcopy
+    echo -e "${GREEN}[OK]${RESET} Secret for '${BOLD}$name${RESET}' copied to clipboard."
+  else
+    # Fallback for Linux (xclip)
+    if command -v xclip >/dev/null 2>&1; then
+      echo -n "$value" | xclip -selection clipboard
+      echo -e "${GREEN}[OK]${RESET} Secret for '${BOLD}$name${RESET}' copied to clipboard (xclip)."
+    else
+      echo -e "${YELLOW}[WARN]${RESET} No clipboard tool found. Printing to terminal:"
+      echo "$value"
+    fi
+  fi
+}
+cmd_list() {
+  local password
+  password=$(_sk_prompt_password "Master password: ")
+
+  local vault_json
+  vault_json=$(_sk_read_vault "$password") || return 1
+
+  local keys
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && keys+=("$line")
+  done < <(_json_keys "$vault_json")
+
+  if [[ ${#keys[@]} -eq 0 || (${#keys[@]} -eq 1 && -z "${keys[0]}") ]]; then
+    echo -e "${DIM}Vault is empty. Add a secret with: ${BOLD}sk add MY_API_KEY${RESET}"
+    return
+  fi
+
+  echo -e "\n${BOLD}${CYAN}Stored Secrets${RESET} ${DIM}(${#keys[@]} total)${RESET}\n"
+  for key in "${keys[@]}"; do
+    [[ -z "$key" ]] && continue
+    local masked="••••••••••••"
+    printf "  ${GREEN}%-35s${RESET} %s\n" "$key" "${DIM}$masked${RESET}"
+  done
+  echo
+}
+
+cmd_remove() {
+  local name="${1:-}"
+  [[ -z "$name" ]] && {
+    echo -e "${RED}[ERROR]${RESET} Usage: sk remove <NAME>" >&2
+    return 1
+  }
+
+  local password
+  password=$(_sk_prompt_password "Master password: ")
+
+  local vault_json
+  vault_json=$(_sk_read_vault "$password") || return 1
+
+  # Check it exists
+  local value
+  value=$(_json_get "$vault_json" "$name")
+  if [[ -z "$value" ]]; then
+    echo -e "${RED}[ERROR]${RESET} Key '$name' not found." >&2
+    return 1
+  fi
+
+  echo -e "${YELLOW}[WARN]${RESET} Remove '${BOLD}%s${RESET}'? [y/N] " "$name"
+  read -r confirm
+  [[ "$confirm" != "y" && "$confirm" != "Y" ]] && {
+    echo "Aborted."
+    return
+  }
+
+  local updated
+  updated=$(_json_delete "$vault_json" "$name")
+  _sk_write_vault "$password" "$updated"
+  echo -e "${GREEN}[OK]${RESET} '$name' removed."
+}
+
+cmd_export() {
+  local password
+  password=$(_sk_prompt_password "Master password: ")
+
+  local vault_json
+  vault_json=$(_sk_read_vault "$password") || return 1
+
+  local keys
+  mapfile -t keys < <(_json_keys "$vault_json")
+
+  for key in "${keys[@]}"; do
+    [[ -z "$key" ]] && continue
+    local value
+    value=$(_json_get "$vault_json" "$key")
+    echo -e 'export %s="%s"\n' "$key" "$value"
+  done
+}
+
+cmd_load() {
+  # This must be sourced to take effect in the current shell.
+  # We print export statements for eval.
+  local password
+  password=$(_sk_prompt_password "Master password (loading vault into session): ")
+
+  local vault_json
+  vault_json=$(_sk_read_vault "$password") || return 1
+
+  local keys
+  mapfile -t keys < <(_json_keys "$vault_json")
+  local count=0
+
+  for key in "${keys[@]}"; do
+    [[ -z "$key" ]] && continue
+    local value
+    value=$(_json_get "$vault_json" "$key")
+    export "$key=$value"
+    ((count++))
+  done
+
+  echo -e "${GREEN}[OK]${RESET} Loaded ${BOLD}$count${RESET} secret(s) into session." >&2
+}
+
+cmd_shell_init() {
+  # Returns the path to the shell integration file so users can:
+  #   source $(sk shell-init)
+  # Or adds an sk-load function to their shell.
+  local init_script="$SECUREKEYS_DIR/shell-init.sh"
+  echo -e "$init_script"
+  # SecureKeys shell integration
+  # Provides: sk-load  — interactively loads all vault secrets into current session
+  sk-load() {
+    local sk_bin
+    sk_bin="$(command -v sk 2>/dev/null || echo "$HOME/.securekeys/bin/sk")"
+    eval "$("$sk_bin" export 2>/dev/null)"
+    echo "Secrets loaded into session." >&2
+  }
+  INIT
+  chmod 600 "$init_script"
+  echo "$init_script"
+}
+
+cmd_rotate() {
+  echo -e "${BOLD}${CYAN}Rotate Master Password${RESET}\n"
+
+  local old_password
+  old_password=$(_sk_prompt_password "Current master password: ")
+
+  local vault_json
+  vault_json=$(_sk_read_vault "$old_password") || return 1
+
+  local new_password
+  new_password=$(_sk_prompt_password "New master password: ")
+  local confirm
+  confirm=$(_sk_prompt_password "Confirm new password: ")
+
+  if [[ "$new_password" != "$confirm" ]]; then
+    echo -e "\n${RED}[ERROR]${RESET} Passwords do not match. Password NOT changed."
+    return 1
+  fi
+
+  # Re-generate salt for extra security
+  openssl rand -hex 32 >"$SALT_FILE"
+  _sk_write_vault "$new_password" "$vault_json"
+
+  echo -e "\n${GREEN}[OK]${RESET} Master password rotated and vault re-encrypted with new salt."
+}
+
+cmd_destroy() {
+  echo -e "${RED}${BOLD}WARNING: This will permanently delete your entire vault.${RESET}"
+  echo -e "Type ${BOLD}DELETE${RESET} to confirm: "
+  read -r confirm
+  if [[ "$confirm" == "DELETE" ]]; then
+    rm -rf "$SECUREKEYS_DIR"
+    echo -e "${GREEN}[OK]${RESET} Vault destroyed."
+  else
+    echo "Aborted."
+  fi
+}
+
+cmd_status() {
+  echo -e "\n${BOLD}${CYAN}SecureKeys Vault Status${RESET}\n"
+  if [[ ! -d "$SECUREKEYS_DIR" ]]; then
+    echo -e "  ${RED}No vault found.${RESET} Run: ${CYAN}sk init${RESET}\n"
+    return
+  fi
+
+  local vault_size="N/A"
+  [[ -f "$VAULT_FILE" ]] && vault_size=$(du -sh "$VAULT_FILE" 2>/dev/null | cut -f1)
+
+  local created="Unknown"
+  if [[ -f "$META_FILE" ]]; then
+    created=$(grep -oP '"created"\s*:\s*"\K[^"]+' "$META_FILE" 2>/dev/null || echo "Unknown")
+  fi
+
+  echo -e "  ${DIM}Vault path   :${RESET}  $SECUREKEYS_DIR"
+  echo -e "  ${DIM}Vault file   :${RESET}  $VAULT_FILE"
+  echo -e "  ${DIM}Vault size   :${RESET}  $vault_size"
+  echo -e "  ${DIM}Created      :${RESET}  $created"
+  echo -e "  ${DIM}Algorithm    :${RESET}  AES-256-CBC + PBKDF2 (100,000 iterations, SHA-256)"
+  echo -e "  ${DIM}Permissions  :${RESET}  $(stat -c '%a' "$SECUREKEYS_DIR" 2>/dev/null || stat -f '%A' "$SECUREKEYS_DIR" 2>/dev/null)"
+  echo
+}
+
+cmd_help() {
+  echo -e "
+${BOLD}${CYAN}sk${RESET} — SecureKeys CLI ${DIM}(AES-256 encrypted vault)${RESET}
+
+${BOLD}${UNDERLINE}COMMANDS${RESET}
+  ${GREEN}sk init${RESET}           Create a new encrypted vault
+  ${GREEN}sk add${RESET} ${DIM}NAME${RESET}      Add or update a secret
+  ${GREEN}sk get${RESET} ${DIM}NAME${RESET}      Decrypt and print a single secret
+  ${GREEN}sk list${RESET}           List all secret names (values masked)
+  ${GREEN}sk remove${RESET} ${DIM}NAME${RESET}   Delete a secret from the vault
+  ${GREEN}sk export${RESET}         Print all secrets as shell export statements
+  ${GREEN}sk load${RESET}           Load all secrets into current shell session
+  ${GREEN}sk shell-init${RESET}     Print path to shell integration file
+  ${GREEN}sk rotate${RESET}         Change master password (re-encrypts vault)
+  ${GREEN}sk destroy${RESET}        ${YELLOW}a${RESET} Permanently delete the vault
+  ${GREEN}sk status${RESET}         Show vault info
+
+${BOLD}${UNDERLINE}EXAMPLES${RESET}
+  ${DIM}# Add a key (value prompted securely)${RESET}
+  sk add OPENAI_API_KEY
+
+  ${DIM}# Load all secrets into your current session${RESET}
+  eval \$(sk export)
+
+  ${DIM}# Add to .zshrc for on-demand loading${RESET}
+  source \$(sk shell-init) ${DIM}# then run 'sk-load'${RESET}
+
+${BOLD}${UNDERLINE}SECURITY${RESET}
+  • ${BOLD}AES-256-CBC${RESET} encryption via OpenSSL
+  • ${BOLD}PBKDF2${RESET} key derivation (100k iterations)
+  • Master password is ${BOLD}never stored${RESET} on disk
+  • Vault permissions restricted to current user (700/600)
+"
+}
+# Dispatch
+main() {
+  local cmd="${1:-help}"
+  shift || true
+
+  case "$cmd" in
+  init) cmd_init "$@" ;;
+  add) cmd_add "$@" ;;
+  get) cmd_get "$@" ;;
+  list) cmd_list "$@" ;;
+  remove | rm) cmd_remove "$@" ;;
+  export) cmd_export "$@" ;;
+  load) cmd_load "$@" ;;
+  shell-init) cmd_shell_init "$@" ;;
+  rotate) cmd_rotate "$@" ;;
+  destroy) cmd_destroy "$@" ;;
+  status) cmd_status "$@" ;;
+  help | --help | -h) cmd_help ;;
+  *)
+    echo -e "${RED}[ERROR]${RESET} Unknown command: $cmd" >&2
+    cmd_help
+    return 1
+    ;;
+  esac
+}
+
+main "$@"
