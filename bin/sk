@@ -31,10 +31,10 @@ cmd_init() {
 
 cmd_add() {
   local name="${1:-}"
-  local value="${2:-}"
+  # local value="${2:-}"
 
   [[ -z "$name" ]] && {
-    echo -e "${RED}[ERROR]${RESET} Usage: sk add <NAME> [value]" >&2
+    echo -e "${RED}[ERROR]${RESET} Usage: sk add <NAME> " >&2 # [Value] was removed here, to ensure i do not paste key on terminal?
     return 1
   }
 
@@ -44,12 +44,12 @@ cmd_add() {
     return 1
   fi
 
-  # Prompt for value if not provided
-  if [[ -z "$value" ]]; then
-    echo -e "${BOLD}Value for %s: ${RESET}" "$name" >&2
-    read -rs value
-    printf "\n" >&2
-  fi
+  # Now, Going to rely on Prompting for value. Value should not be parsed with the add argument.
+  # if [[ -z "$value" ]]; then
+  printf "${BOLD}Value for %s: ${RESET}" "$name" >&2
+  read -rs value
+  printf "\n" >&2
+  # fi
 
   local password
   password=$(_sk_prompt_password "Master password: ")
@@ -60,20 +60,52 @@ cmd_add() {
   local updated
   updated=$(_json_set "$vault_json" "$name" "$value")
   _sk_write_vault "$password" "$updated"
-
+  # Remove the value in memory once saved
+  unset value updated vault_json password
   echo -e "${GREEN}[OK]${RESET} Secret ${BOLD}$name${RESET} saved."
 }
 
+# Helper functions for copying
+_sk_copy() {
+  local input="$1"
+  local clear_delay=15 # Seconds before clipboard clears automatically( This is for macos? no native copy once)
+
+  # 1. Wayland (nEED TO BE TESTED. STRAIGHT FROM DOCS) : https://man.archlinux.org/man/wl-copy.1
+  if [[ -n "$WAYLAND_DISPLAY" ]] && command -v wl-copy >/dev/null 2>&1; then
+    # --paste-once: Serve the selection to only one requester and then exit
+    echo -n "$input" | wl-copy --paste-once && return 0
+
+  # 2. macOS
+  elif command -v pbcopy >/dev/null 2>&1; then
+    echo -n "$input" | pbcopy
+    # Background a task to clear the clipboard after delay ste above!
+    (sleep "$clear_delay" && echo -n "" | pbcopy) >/dev/null 2>&1 &
+    return 0
+
+  # 3. Fedora
+  elif command -v xclip >/dev/null 2>&1; then
+    echo -n "$input" | xclip -selection clipboard
+    (sleep "$clear_delay" && echo -n "" | xclip -selection clipboard) >/dev/null 2>&1 &
+    return 0
+
+  # 4. WSL (Windows)
+  elif command -v clip.exe >/dev/null 2>&1; then
+    echo -n "$input" | clip.exe
+    (sleep "$clear_delay" && echo -n "" | clip.exe) >/dev/null 2>&1 &
+    return 0
+  fi
+
+  return 1
+}
 cmd_get() {
   local name="${1:-}"
   [[ -z "$name" ]] && {
-    echo -e "${RED}[ERROR]${RESET} Usage: sk get <NAME>" >&2
+    printf "${RED}[ERROR]${RESET} Usage: sk get <NAME>\n" >&2
     return 1
   }
 
   local password
   password=$(_sk_prompt_password "Master password: ")
-
   local vault_json
   vault_json=$(_sk_read_vault "$password") || return 1
 
@@ -81,24 +113,25 @@ cmd_get() {
   value=$(_json_get "$vault_json" "$name")
 
   if [[ -z "$value" ]]; then
-    echo -e "${RED}[ERROR]${RESET} Key '${name}' not found in vault." >&2
+    printf "${RED}[ERROR]${RESET} Key '${name}' not found.\n" >&2
     return 1
   fi
 
-  if command -v pbcopy >/dev/null 2>&1; then
-    # echo -n ensures we don't copy a trailing newline character
-    echo -n "$value" | pbcopy
-    echo -e "${GREEN}[OK]${RESET} Secret for '${BOLD}$name${RESET}' copied to clipboard."
-  else
-    # Fallback for Linux (xclip)
-    if command -v xclip >/dev/null 2>&1; then
-      echo -n "$value" | xclip -selection clipboard
-      echo -e "${GREEN}[OK]${RESET} Secret for '${BOLD}$name${RESET}' copied to clipboard (xclip)."
+  if _sk_copy "$value"; then
+    printf "${GREEN}[OK]${RESET} Secret for '${BOLD}%s${RESET}' copied to clipboard.\n" "$name"
+
+    if [[ -n "$WAYLAND_DISPLAY" ]]; then
+      printf "${DIM}Clipboard will clear after the first paste.${RESET}\n"
     else
-      echo -e "${YELLOW}[WARN]${RESET} No clipboard tool found. Printing to terminal:"
-      echo "$value"
+      printf "${DIM}Clipboard will clear automatically in 15 seconds.${RESET}\n"
     fi
+  else
+    printf "${RED}[ERROR]${RESET} No clipboard tool found.\n" >&2
+    unset value password
+    return 1
   fi
+
+  unset value password
 }
 cmd_list() {
   local password
@@ -147,7 +180,7 @@ cmd_remove() {
     return 1
   fi
 
-  echo -e "${YELLOW}[WARN]${RESET} Remove '${BOLD}%s${RESET}'? [y/N] " "$name"
+  printf "${YELLOW}[WARN]${RESET} Remove '${BOLD}%s${RESET}'? [y/N] " "$name"
   read -r confirm
   [[ "$confirm" != "y" && "$confirm" != "Y" ]] && {
     echo "Aborted."
@@ -177,8 +210,9 @@ cmd_export() {
     [[ -z "$key" ]] && continue
     local value
     value=$(_json_get "$vault_json" "$key")
-    echo -e 'export %s="%s"\n' "$key" "$value"
+    printf 'export %s="%s"\n' "$key" "$value"
   done
+  unset password vault_json value
 }
 
 cmd_load() {
@@ -300,6 +334,9 @@ cmd_status() {
 }
 
 cmd_help() {
+  # Removed Lines,:
+  # ${GREEN}sk export${RESET}         Print all secrets as shell export statements
+  #
   echo -e "
 ${BOLD}${CYAN}sk${RESET} — SecureKeys CLI ${DIM}(AES-256 encrypted vault)${RESET}
 
@@ -309,7 +346,6 @@ ${BOLD}${UNDERLINE}COMMANDS${RESET}
   ${GREEN}sk get${RESET} ${DIM}NAME${RESET}      Decrypt and print a single secret
   ${GREEN}sk list${RESET}           List all secret names (values masked)
   ${GREEN}sk remove${RESET} ${DIM}NAME${RESET}   Delete a secret from the vault
-  ${GREEN}sk export${RESET}         Print all secrets as shell export statements
   ${GREEN}sk load${RESET}           Load all secrets into current shell session
   ${GREEN}sk shell-init${RESET}     Print path to shell integration file
   ${GREEN}sk rotate${RESET}         Change master password (re-encrypts vault)
@@ -344,7 +380,7 @@ main() {
   get) cmd_get "$@" ;;
   list) cmd_list "$@" ;;
   remove | rm) cmd_remove "$@" ;;
-  export) cmd_export "$@" ;;
+  # export) cmd_export "$@" ;;
   load) cmd_load "$@" ;;
   shell-init) cmd_shell_init "$@" ;;
   rotate) cmd_rotate "$@" ;;
