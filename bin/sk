@@ -16,8 +16,13 @@
 #   sk status                  Show vault info
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/../lib/crypto.sh"
 
+if [[ -f "$SCRIPT_DIR/../lib/crypto.sh" ]]; then
+  source "$SCRIPT_DIR/../lib/crypto.sh"
+else
+  echo -n "${RED}[ERROR] ${RESET} Could not locate the library responsible for encryption. "
+  exit 1
+fi
 #Commands
 
 cmd_init() {
@@ -163,7 +168,10 @@ cmd_export() {
   vault_json=$(_sk_read_vault "$password") || return 1
 
   local keys
-  mapfile -t keys < <(_json_keys "$vault_json")
+  # mapfile -t keys < <(_json_keys "$vault_json")
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && keys+=("$line")
+  done < <(_json_keys "$vault_json")
 
   for key in "${keys[@]}"; do
     [[ -z "$key" ]] && continue
@@ -183,7 +191,10 @@ cmd_load() {
   vault_json=$(_sk_read_vault "$password") || return 1
 
   local keys
-  mapfile -t keys < <(_json_keys "$vault_json")
+  # mapfile -t keys < <(_json_keys "$vault_json")
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && keys+=("$line")
+  done < <(_json_keys "$vault_json")
   local count=0
 
   for key in "${keys[@]}"; do
@@ -202,16 +213,19 @@ cmd_shell_init() {
   #   source $(sk shell-init)
   # Or adds an sk-load function to their shell.
   local init_script="$SECUREKEYS_DIR/shell-init.sh"
-  echo -e "$init_script"
+  mkdir -p "$SECUREKEYS_DIR"
+  cat <<EOF >"$init_script"
+  # Securekeys integration
   # SecureKeys shell integration
   # Provides: sk-load  — interactively loads all vault secrets into current session
   sk-load() {
     local sk_bin
     sk_bin="$(command -v sk 2>/dev/null || echo "$HOME/.securekeys/bin/sk")"
-    eval "$("$sk_bin" export 2>/dev/null)"
+    eval \$("\$sk_bin" export)
     echo "Secrets loaded into session." >&2
   }
-  INIT
+EOF
+
   chmod 600 "$init_script"
   echo "$init_script"
 }
@@ -264,17 +278,24 @@ cmd_status() {
   local vault_size="N/A"
   [[ -f "$VAULT_FILE" ]] && vault_size=$(du -sh "$VAULT_FILE" 2>/dev/null | cut -f1)
 
-  local created="Unknown"
-  if [[ -f "$META_FILE" ]]; then
-    created=$(grep -oP '"created"\s*:\s*"\K[^"]+' "$META_FILE" 2>/dev/null || echo "Unknown")
+  local perms
+  if stat -c '%a' . >/dev/null 2>&1; then
+    perms=$(stat -c '%a' "$SECUREKEYS_DIR")
+  else
+    perms=$(stat -f '%Lp' "$SECUREKEYS_DIR")
   fi
+
+  # local created="Unknown"
+  # if [[ -f "$META_FILE" ]]; then
+  #   created=$(grep -oP '"created"\s*:\s*"\K[^"]+' "$META_FILE" 2>/dev/null || echo "Unknown")
+  # fi
 
   echo -e "  ${DIM}Vault path   :${RESET}  $SECUREKEYS_DIR"
   echo -e "  ${DIM}Vault file   :${RESET}  $VAULT_FILE"
   echo -e "  ${DIM}Vault size   :${RESET}  $vault_size"
-  echo -e "  ${DIM}Created      :${RESET}  $created"
+  # echo -e "  ${DIM}Created      :${RESET}  $created"
   echo -e "  ${DIM}Algorithm    :${RESET}  AES-256-CBC + PBKDF2 (100,000 iterations, SHA-256)"
-  echo -e "  ${DIM}Permissions  :${RESET}  $(stat -c '%a' "$SECUREKEYS_DIR" 2>/dev/null || stat -f '%A' "$SECUREKEYS_DIR" 2>/dev/null)"
+  echo -e "  ${DIM}Permissions  :${RESET}  $perms"
   echo
 }
 
