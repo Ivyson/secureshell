@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e #Exit if the return of any func in here returns a non zero value(non zero assumed to be an error of course!)
 # Detect the SYSTEM ALREADY
-OS=($(uname -a -d " " -f1,2))
+OS=($(uname -a | cut -d " " -f1,2))
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'
@@ -14,10 +14,11 @@ INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}" # Check if the Install DIr is alr
 LIB_DIR="$HOME/.local/lib/securekeys" # This will store the keys..
 
 echo -e "\n${BOLD}${CYAN}SecureShell Installer?${RESET}\n"
-if [ ${OS[0]} != "Linux" || ! ${OS[0] != "Darwin"} ]; then #Need to confirm for MacOs
+if [[ ${OS[0]} != "Linux" && ${OS[0] != "Darwin"} ]]; then #Need to confirm for MacOs
   # : # Short for pass, or no operatgion?\
-  break
+  # break
   exit -1
+fi
   
 if ! command -v openssl &>/dev/null; then #requires the openssl for encryption of the keys later in the ./lib/crypto.sh
   echo -e "${RED}[ERROR]${RESET} openssl is required."
