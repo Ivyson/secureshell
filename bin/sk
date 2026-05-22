@@ -18,6 +18,9 @@
 
 # SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT_DIR=~/.local/lib/securekeys/crypto.sh
+INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}" 
+LIB_DIR="$HOME/.local/lib/securekeys" 
+
 
 
 if [[ -f "$SCRIPT_DIR" ]]; then
@@ -149,7 +152,7 @@ cmd_list() {
   done < <(_json_keys "$vault_json")
 
   if [[ ${#keys[@]} -eq 0 || (${#keys[@]} -eq 1 && -z "${keys[0]}") ]]; then
-    echo -e "${DIM}Vault is empty. Add a secret with: ${BOLD}sk add MY_API_NAME {GEMINI_API_KEY}${RESET}"
+    echo -e "${DIM}Vault is empty. Add a secret with: ${BOLD}sk add MY_API_NAME ${RESET}"
     return
   fi
 
@@ -336,6 +339,42 @@ cmd_status() {
   echo -e "  ${DIM}Permissions  :${RESET}  $perms"
   echo
 }
+cmd_uninstall() {
+  local bin_removed=false
+  local lib_removed=false
+
+  echo -e "\n${BOLD}${CYAN}Removing the tool and its supporting Libraries...${RESET}\n"
+
+  # Remove the sk binary stored in the bin folde
+  if [[ -f "$INSTALL_DIR/sk" ]]; then
+    rm -f "$INSTALL_DIR/sk"
+    echo -e "${GREEN}[OK]${RESET} Removed ${CYAN}$INSTALL_DIR/sk${RESET}"
+    bin_removed=true
+  else
+    echo -e "${RED}[WARN]${RESET} ${CYAN}$INSTALL_DIR/sk${RESET} not found"
+  fi
+
+  # Remove the library directory containing crypto.sh
+  if [[ -d "$LIB_DIR" ]]; then
+    rm -rf "$LIB_DIR"
+    echo -e "${GREEN}[OK]${RESET} Removed library directory ${CYAN}$LIB_DIR${RESET}"
+    lib_removed=true
+  else
+    echo -e "${RED}[WARN]${RESET} Library directory ${CYAN}$LIB_DIR${RESET} not found"
+  fi
+
+  # if [[ -d "$HOME/.local/lib" ]] && [[ -z "$(ls -A "$HOME/.local/lib" 2>/dev/null)" ]]; then
+  #   rmdir "$HOME/.local/lib"
+  #   echo -e "${GREEN}[OK]${RESET} Removed empty directory ${CYAN}$HOME/.local/lib${RESET}"
+  # fi
+  #
+  if [[ "$bin_removed" == "true" && "$lib_removed" == "true" ]]; then
+    echo -e "\n${GREEN}[OK]${RESET} sk uninstalled successfully."
+  else
+    echo -e "\n${YELLOW}[WARN]${RESET} Verification needed: Please check if binary or libraries still exist."
+  fi
+  echo -e "${CYAN}Remember to remove any PATH exports or integrations from your shell profile (.zshrc / .bashrc)${RESET}\n"
+}
 
 cmd_help() {
   # Removed Lines,:
@@ -355,22 +394,19 @@ ${BOLD}${UNDERLINE}COMMANDS${RESET}
   ${GREEN}sk rotate${RESET}         Change master password (re-encrypts vault)
   ${GREEN}sk destroy${RESET}        ${YELLOW}a${RESET} Permanently delete the vault
   ${GREEN}sk status${RESET}         Show vault info
+  ${GREEN}sk uninstall${RESET}      Safely remove the sk executable and library files
 
 ${BOLD}${UNDERLINE}EXAMPLES${RESET}
-  ${DIM}# Add a key (value prompted securely)${RESET}
-  sk add OPENAI_API_KEY
-
-  ${DIM}# Load all secrets into your current session${RESET}
-  eval \$(sk export)
-
-  ${DIM}# Add to .zshrc for on-demand loading${RESET}
-  source \$(sk shell-init) ${DIM}# then run 'sk-load'${RESET}
-
-${BOLD}${UNDERLINE}SECURITY${RESET}
+  sk add OPENAI_API_NAME  - ${BOLD}You Only enter the name of the key, Not the actual Key${RESET}
+  sk get gh_token
+  sk status
+  sk remove gh_token
+  
+  ${BOLD}${UNDERLINE}SECURITY${RESET}
   - ${BOLD}AES-256-CBC${RESET} encryption via OpenSSL
-  - ${BOLD}PBKDF2${RESET} key derivation (100k iterations)
+  - ${BOLD}PBKDF2${RESET} key derivation
   - Master password is ${BOLD}never stored${RESET} on disk
-  - Vault permissions restricted to current user (700/600)
+  - Vault permissions restricted to current user 
 "
 }
 # Dispatch
@@ -390,6 +426,7 @@ main() {
   rotate) cmd_rotate "$@" ;;
   destroy) cmd_destroy "$@" ;;
   status) cmd_status "$@" ;;
+  uninstall) cmd_uninstall "$@";;
   help | --help | -h) cmd_help ;;
   *)
     echo -e "${RED}[ERROR]${RESET} Unknown command: $cmd" >&2

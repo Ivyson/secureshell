@@ -14,12 +14,12 @@ RESET='\033[0m'
 
 sk_check_deps() {
   local missing=()
-  for cmd in openssl base64; do
+  for cmd in openssl base64 jq; do
     command -v "$cmd" &>/dev/null || missing+=("$cmd")
   done
   if [[ ${#missing[@]} -gt 0 ]]; then
     echo -e "${RED}[ERROR]${RESET} Missing dependencies: ${missing[*]}" >&2
-    echo -e "  Install with: ${CYAN}brew install openssl${RESET} (macOS) or ${CYAN}apt install openssl${RESET} (Linux)" >&2
+    echo -e "  Install with: ${CYAN}brew install openssl jq${RESET} (macOS) or ${CYAN}apt install openssl jq${RESET} (Linux)" >&2
     return 1
   fi
 }
@@ -44,15 +44,15 @@ sk_init_vault() {
   chmod 600 "$META_FILE"
 
   # Bootstrap empty JSON vault: {}
-  local password
+  local password confirm
   echo -e "${BOLD}${CYAN}SecureKeys Vault Initialisation${RESET}"
   echo -e "${DIM}Your master password is NEVER stored anywhere. Don't forget it.${RESET}\n"
   password=$(_sk_prompt_password "Set master password: ")
-  local confirm
   confirm=$(_sk_prompt_password "Confirm master password: ")
 
   if [[ "$password" != "$confirm" ]]; then
-    rm -rf "$SECUREKEYS_DIR"
+    rm -f "$SALT_FILE" "$META_FILE"
+    rmdir "$SECUREKEYS_DIR" 2>/dev/null
     echo -e "\n${RED}[ERROR]${RESET} Passwords do not match. Vault not created."
     return 1
   fi
@@ -61,25 +61,28 @@ sk_init_vault() {
   chmod 600 "$VAULT_FILE"
 
   echo -e "\n${GREEN}[OK]${RESET} Vault created at ${CYAN}$SECUREKEYS_DIR${RESET}"
-  echo -e "${DIM}Add ${BOLD}source \$(sk shell-init)${DIM} to your .zshrc to load keys as env vars.${RESET}"
+  # echo -e "${DIM}Add ${BOLD}source \$(sk shell-init)${DIM} to your .zshrc to load keys as env vars.${RESET}"
 }
 
-# Derives key from password + stored salt using PBKDF2 (100k iterations, SHA-256)
+# Derives key from password + stored salt using PBKDF2 (100 , 000 iterations, SHA-256)
 _sk_encrypt() {
   local password="$1"
   local salt
-  salt=$(cat "$SALT_FILE")
-  # -a = base64 output, -pbkdf2 = PBKDF2 key derivation, -iter = iterations
-  openssl enc -aes-256-cbc -a -pbkdf2 -iter 100000 \
-    -pass "pass:${password}${salt}" 2>/dev/null
+  salt=$(<"$SALT_FILE") 
+  
+  export SK_PASS="${password}${salt}"
+  openssl enc -aes-256-cbc -a -pbkdf2 -iter 100000 -pass env:SK_PASS 2>/dev/null
+  unset SK_PASS
 }
 
 _sk_decrypt() {
   local password="$1"
   local salt
-  salt=$(cat "$SALT_FILE")
-  openssl enc -d -aes-256-cbc -a -pbkdf2 -iter 100000 \
-    -pass "pass:${password}${salt}" 2>/dev/null
+  salt=$(<"$SALT_FILE")
+  
+  export SK_PASS="${password}${salt}"
+  openssl enc -d -aes-256-cbc -a -pbkdf2 -iter 100000 -pass env:SK_PASS 2>/dev/null
+  unset SK_PASS
 }
 
 _sk_prompt_password() {
@@ -98,7 +101,7 @@ _sk_read_vault() {
     return 1
   fi
   local plain
-  plain=$(cat "$VAULT_FILE" | _sk_decrypt "$password" 2>/dev/null)
+  plain=$(_sk_decrypt "$password" < "$VAULT_FILE" 2>/dev/null)
   if [[ -z "$plain" ]]; then
     echo -e "${RED}[ERROR]${RESET} Decryption failed — wrong password or corrupted vault." >&2
     return 1
@@ -110,47 +113,35 @@ _sk_write_vault() {
   local password="$1"
   local json="$2"
   local tmp
-  tmp=$(mktemp)
-  echo "$json" | _sk_encrypt "$password" >"$tmp" 2>/dev/null
-  mv "$tmp" "$VAULT_FILE"
-  chmod 600 "$VAULT_FILE"
+  
+  # Have the temp file in same directory for atomic write?
+  tmp=$(mktemp "$SECUREKEYS_DIR/vault.tmp.XXXXXX") || return 1
+  
+  if echo "$json" | _sk_encrypt "$password" >"$tmp" 2>/dev/null; then
+    mv "$tmp" "$VAULT_FILE"
+    chmod 600 "$VAULT_FILE"
+  else
+    rm -f "$tmp"
+    return 1
+  fi
 }
 
 _json_get() {
   local json="$1" key="$2"
-  echo "$json" |
-    grep -oE "\"${key}\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" 2>/dev/null |
-    sed -E 's/^"[^"]*"[[:space:]]*:[[:space:]]*"(.*)"/\1/'
+  echo "$json" | jq -r --arg key "$key" '.[$key] // empty'
 }
 
 _json_set() {
   local json="$1" key="$2" value="$3"
-  # Escape special chars in value for sed
-  local escaped_value
-  escaped_value=$(printf '%s' "$value" | sed 's/[&/\]/\\&/g; s/"/\\"/g')
-  local escaped_key
-  escaped_key=$(printf '%s' "$key" | sed 's/[&/\]/\\&/g')
-
-  if echo "$json" | grep -qE "\"${key}\"[[:space:]]*:"; then
-    # Update existing
-    echo "$json" | sed -E "s|\"${escaped_key}\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"${escaped_key}\": \"${escaped_value}\"|g"
-  else
-    # Insert new key before closing brace
-    echo "$json" | sed -E "s|\}$|, \"${escaped_key}\": \"${escaped_value}\"}|"
-  fi
+  echo "$json" | jq --arg key "$key" --arg val "$value" '.[$key] = $val'
 }
 
-# Delete a key from flat JSON
 _json_delete() {
   local json="$1" key="$2"
-  echo "$json" |
-    sed -E "s|,?[[:space:]]*\"${key}\"[[:space:]]*:[[:space:]]*\"[^\"]*\"||g" |
-    sed -E "s|\{[[:space:]]*,|\{|g" |
-    sed -E "s|,[[:space:]]*\}|}|g"
+  echo "$json" | jq --arg key "$key" 'del(.[$key])'
 }
 
-# List all keys from flat JSON
 _json_keys() {
   local json="$1"
-  echo "$json" | grep -oE '"[^"]+"[[:space:]]*:' | sed 's/"//g; s/[[:space:]]*://g'
+  echo "$json" | jq -r 'keys_unsorted[]'
 }
