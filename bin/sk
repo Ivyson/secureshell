@@ -16,8 +16,9 @@
 #   sk destroy                 Permanently delete the vault
 #   sk status                  Show vault info
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPT_DIR="$SCRIPT_DIR/../lib/crypto.sh"
+# SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR=~/.local/lib/securekeys/crypto.sh
+
 
 if [[ -f "$SCRIPT_DIR" ]]; then
   source "$SCRIPT_DIR"
@@ -70,7 +71,7 @@ cmd_add() {
 # Helper functions for copying
 _sk_copy() {
   local input="$1"
-  local clear_delay=15 # Seconds before clipboard clears automatically( This is for macos? no native copy once)
+  local clear_delay=15 # Seconds before clipboard clears automatically 
 
   # 1. Wayland (nEED TO BE TESTED. STRAIGHT FROM DOCS) : https://man.archlinux.org/man/wl-copy.1
   if [[ -n "$WAYLAND_DISPLAY" ]] && command -v wl-copy >/dev/null 2>&1; then
@@ -81,16 +82,16 @@ _sk_copy() {
   elif command -v pbcopy >/dev/null 2>&1; then
     echo -n "$input" | pbcopy
     # Background a task to clear the clipboard after delay ste above!
-    (sleep "$clear_delay" && echo -n "" | pbcopy) >/dev/null 2>&1 &
+    (sleep "$clear_delay" && printf "" | pbcopy) >/dev/null 2>&1 &
     return 0
 
   # 3. Fedora
   elif command -v xclip >/dev/null 2>&1; then
-    echo -n "$input" | xclip -selection clipboard
+    echo -n "$input" | xclip -selection clipboard 
     (sleep "$clear_delay" && echo -n "" | xclip -selection clipboard) >/dev/null 2>&1 &
     return 0
 
-  # 4. WSL (Windows)
+    # 4. WSL (Windows ) Not tested at all, Check out: https://superuser.com/questions/1618537/use-clipboard-through-wsl
   elif command -v clip.exe >/dev/null 2>&1; then
     echo -n "$input" | clip.exe
     (sleep "$clear_delay" && echo -n "" | clip.exe) >/dev/null 2>&1 &
@@ -148,17 +149,17 @@ cmd_list() {
   done < <(_json_keys "$vault_json")
 
   if [[ ${#keys[@]} -eq 0 || (${#keys[@]} -eq 1 && -z "${keys[0]}") ]]; then
-    echo -e "${DIM}Vault is empty. Add a secret with: ${BOLD}sk add MY_API_KEY${RESET}"
+    echo -e "${DIM}Vault is empty. Add a secret with: ${BOLD}sk add MY_API_NAME {GEMINI_API_KEY}${RESET}"
     return
   fi
 
   echo -e "\n${BOLD}${CYAN}Stored Secrets${RESET} ${DIM}(${#keys[@]} total)${RESET}\n"
+  local masked="••••••••••••"
   for key in "${keys[@]}"; do
     [[ -z "$key" ]] && continue
-    local masked="••••••••••••"
-    printf "  ${GREEN}%-35s${RESET} %s\n" "$key" "${DIM}$masked${RESET}"
+    echo -e "${GREEN}${RESET} $key : " "${DIM}$masked${RESET}"
   done
-  echo
+  # echo
 }
 
 cmd_remove() {
@@ -218,6 +219,7 @@ cmd_export() {
 }
 
 cmd_load() {
+  # TODO This is really not important, Currently could allow interception? so will have it hanging for now
   # This must be sourced to take effect in the current shell.
   # We print export statements for eval.
   local password
@@ -251,8 +253,8 @@ cmd_shell_init() {
   local init_script="$SECUREKEYS_DIR/shell-init.sh"
   mkdir -p "$SECUREKEYS_DIR"
   cat <<EOF >"$init_script"
-  # Securekeys integration
-  # SecureKeys shell integration
+  # sk integration
+  # sk integration
   # Provides: sk-load  — interactively loads all vault secrets into current session
   sk-load() {
     local sk_bin
@@ -337,19 +339,19 @@ cmd_status() {
 
 cmd_help() {
   # Removed Lines,:
+  # ${GREEN}sk shell-init${RESET}     Print path to shell integration file
   # ${GREEN}sk export${RESET}         Print all secrets as shell export statements
+  # ${GREEN}sk load${RESET}           Load all secrets into current shell session
   #
   echo -e "
-${BOLD}${CYAN}sk${RESET} — SecureKeys CLI ${DIM}(AES-256 encrypted vault)${RESET}
+${BOLD}${CYAN}sk${RESET} SecureKeys CLI Tool ${DIM}${RESET}
 
 ${BOLD}${UNDERLINE}COMMANDS${RESET}
   ${GREEN}sk init${RESET}           Create a new encrypted vault
   ${GREEN}sk add${RESET} ${DIM}NAME${RESET}      Add or update a secret
   ${GREEN}sk get${RESET} ${DIM}NAME${RESET}      Decrypt and print a single secret
   ${GREEN}sk list${RESET}           List all secret names (values masked)
-  ${GREEN}sk remove${RESET} ${DIM}NAME${RESET}   Delete a secret from the vault
-  ${GREEN}sk load${RESET}           Load all secrets into current shell session
-  ${GREEN}sk shell-init${RESET}     Print path to shell integration file
+  ${GREEN}sk remove | rm ${RESET} ${DIM}NAME${RESET}   Delete a secret from the vault
   ${GREEN}sk rotate${RESET}         Change master password (re-encrypts vault)
   ${GREEN}sk destroy${RESET}        ${YELLOW}a${RESET} Permanently delete the vault
   ${GREEN}sk status${RESET}         Show vault info
@@ -365,10 +367,10 @@ ${BOLD}${UNDERLINE}EXAMPLES${RESET}
   source \$(sk shell-init) ${DIM}# then run 'sk-load'${RESET}
 
 ${BOLD}${UNDERLINE}SECURITY${RESET}
-  • ${BOLD}AES-256-CBC${RESET} encryption via OpenSSL
-  • ${BOLD}PBKDF2${RESET} key derivation (100k iterations)
-  • Master password is ${BOLD}never stored${RESET} on disk
-  • Vault permissions restricted to current user (700/600)
+  - ${BOLD}AES-256-CBC${RESET} encryption via OpenSSL
+  - ${BOLD}PBKDF2${RESET} key derivation (100k iterations)
+  - Master password is ${BOLD}never stored${RESET} on disk
+  - Vault permissions restricted to current user (700/600)
 "
 }
 # Dispatch
@@ -383,8 +385,8 @@ main() {
   list) cmd_list "$@" ;;
   remove | rm) cmd_remove "$@" ;;
   # export) cmd_export "$@" ;;
-  load) cmd_load "$@" ;;
-  shell-init) cmd_shell_init "$@" ;;
+  # load) cmd_load "$@" ;;
+  # shell-init) cmd_shell_init "$@" ;;
   rotate) cmd_rotate "$@" ;;
   destroy) cmd_destroy "$@" ;;
   status) cmd_status "$@" ;;

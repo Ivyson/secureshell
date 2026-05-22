@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# General Error code 1
 set -e #Exit if the return of any func in here returns a non zero value(non zero assumed to be an error of course!)
 # Detect the SYSTEM ALREADY
 OS=($(uname -a | cut -d " " -f1,2))
@@ -18,7 +19,7 @@ if [[ ${OS[0]} != "Linux" && ${OS[0]} != "Darwin" ]]; then #Need to confirm for 
   # : # Short for pass, or no operatgion?\
   # break
   echo -e "The Operating Systems supported are {Linux | Darwin}"
-  exit -1
+  exit 1 # Error
 fi
   
 if ! command -v openssl &>/dev/null; then #requires the openssl for encryption of the keys later in the ./lib/crypto.sh
