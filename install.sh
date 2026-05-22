@@ -14,9 +14,10 @@ INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}" # Check if the Install DIr is alr
 LIB_DIR="$HOME/.local/lib/securekeys" # This will store the keys..
 
 echo -e "\n${BOLD}${CYAN}SecureShell Installer?${RESET}\n"
-if [[ ${OS[0]} != "Linux" && ${OS[0] != "Darwin"} ]]; then #Need to confirm for MacOs
+if [[ ${OS[0]} != "Linux" && ${OS[0]} != "Darwin" ]]; then #Need to confirm for MacOs
   # : # Short for pass, or no operatgion?\
   # break
+  echo -e "The Operating Systems supported are {Linux | Darwin}"
   exit -1
 fi
   

@@ -2,6 +2,7 @@
 # sk — SecureKeys CLI
 # Manage encrypted API keys / secrets stored in an AES-256 vault
 #
+#
 # Usage:
 #   sk init                    Create a new encrypted vault
 #   sk add <NAME> [value]      Add or update a secret
@@ -16,11 +17,12 @@
 #   sk status                  Show vault info
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$SCRIPT_DIR/../lib/crypto.sh"
 
-if [[ -f "$SCRIPT_DIR/../lib/crypto.sh" ]]; then
-  source "$SCRIPT_DIR/../lib/crypto.sh"
+if [[ -f "$SCRIPT_DIR" ]]; then
+  source "$SCRIPT_DIR"
 else
-  echo -n "${RED}[ERROR] ${RESET} Could not locate the library responsible for encryption. "
+  echo -e "${RED}[ERROR] ${RESET} Could not locate the library responsible for encryption. Check the path ${SCRIPT_DIR}"
   exit 1
 fi
 #Commands

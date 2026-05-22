@@ -30,7 +30,7 @@ if [ -d "$LIB_DIR" ]; then
 else
   echo -e "${RED}[WARN]${RESET} Library directory ${CYAN}$LIB_DIR${RESET} not found"
   lib_removed=false
-fizzz
+fi
 
 # Remove empty parent directory if it exists
 if [ -d "$HOME/.local/lib" ] && [ -z "$(ls -A "$HOME/.local/lib")" ]; then
