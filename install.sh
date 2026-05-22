@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-set -e
-
+set -e #Exit if the return of any func in here returns a non zero value(non zero assumed to be an error of course!)
+# Detect the SYSTEM ALREADY
+OS=($(uname -a -d " " -f1,2))
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'
@@ -8,13 +9,17 @@ BOLD='\033[1m'
 DIM='\033[2m'
 RESET='\033[0m'
 
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
-LIB_DIR="$HOME/.local/lib/securekeys"
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" # This should be getting the location of this repo.
+INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}" # Check if the Install DIr is already set in the environment, default to the linux's bin folder
+LIB_DIR="$HOME/.local/lib/securekeys" # This will store the keys..
 
-echo -e "\n${BOLD}${CYAN}SecureKeys Installer${RESET}\n"
-
-if ! command -v openssl &>/dev/null; then
+echo -e "\n${BOLD}${CYAN}SecureShell Installer?${RESET}\n"
+if [ ${OS[0]} != "Linux" || ! ${OS[0] != "Darwin"} ]; then #Need to confirm for MacOs
+  # : # Short for pass, or no operatgion?\
+  break
+  exit -1
+  
+if ! command -v openssl &>/dev/null; then #requires the openssl for encryption of the keys later in the ./lib/crypto.sh
   echo -e "${RED}[ERROR]${RESET} openssl is required."
   echo -e "  macOS: ${CYAN}brew install openssl${RESET}"
   echo -e "  Linux: ${CYAN}sudo apt install openssl${RESET}"
