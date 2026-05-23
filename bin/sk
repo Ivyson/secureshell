@@ -94,8 +94,6 @@ cmd_add() {
   unset updated password pass_value user_value
 }
 
-# Helper functions for copying
-
 
 cmd_edit() {
   local name="${1:-}"
@@ -111,7 +109,6 @@ cmd_edit() {
   local vault_json
   vault_json=$(_sk_read_vault "$password") || return 1
 
-  # Detect credential type
   local existing_user
   local existing_pass
   local existing_value
@@ -120,7 +117,7 @@ cmd_edit() {
   existing_pass=$(_json_get "$vault_json" "${name}_PASS")
   existing_value=$(_json_get "$vault_json" "$name")
 
-  # Ensure key exists
+  # check key exists
   if [[ -z "$existing_user" && -z "$existing_pass" && -z "$existing_value" ]]; then
     echo -e "${RED}[ERROR]${RESET} Key '${name}' not found." >&2
     return 1
@@ -128,7 +125,7 @@ cmd_edit() {
 
   local updated="$vault_json"
 
-  # Login credentials
+  # Login creds
   if [[ -n "$existing_user" || -n "$existing_pass" ]]; then
     echo -e "${CYAN}[INFO]${RESET} Editing login credentials for '${BOLD}${name}${RESET}'"
 
