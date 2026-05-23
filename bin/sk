@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # sk — SecureKeys CLI
-# Manage encrypted API keys / secrets stored in an AES-256 vault
+# Manage encrypted API keys/secrets Login Credebtials stored in an AES-256 vault
+#
+# An IMportant AddOn? Not allowing a user to add already matching key_name, also allow users to edit credentials just in case they change their password
 #
 #
 # Usage:
@@ -36,6 +38,9 @@ cmd_init() {
 }
 
 cmd_add() {
+  local user_value=""
+  local pass_value=""
+  # local single_value=""
   local name="${1:-}"
   # local value="${2:-}"
 
@@ -49,13 +54,22 @@ cmd_add() {
     echo -e "${RED}[ERROR]${RESET} Key name must be a valid shell variable (letters, digits, underscores)." >&2
     return 1
   fi
+  # Newer Support: LogIn Keys embedding
+  printf "${BOLD}Are you trying to add Login-In Credentials (requires username + Password) [y/N]:${RESET}"
+  read -r is_login
 
-  # Now, Going to rely on Prompting for value. Value should not be parsed with the add argument.
-  # if [[ -z "$value" ]]; then
-  printf "${BOLD}Value for %s: ${RESET}" "$name" >&2
-  read -rs value
-  printf "\n" >&2
-  # fi
+  if [[ "$is_login" =~ [yY]$ ]]; then
+    printf "${BOLD}Enter Username: ${RESET}"
+    read -r user_value
+    printf "${BOLD}Enter the password:${RESET} "
+    read -rs pass_value
+    printf "\n" >&2
+  else
+    # Now, Going to rely on Prompting for value. Value should not be parsed with the add argument.
+    printf "${BOLD}Value for %s: ${RESET}" "$name" >&2
+    read -rs value
+    printf "\n" >&2
+  fi
 
   local password
   password=$(_sk_prompt_password "Master password: ")
@@ -63,15 +77,132 @@ cmd_add() {
   local vault_json
   vault_json=$(_sk_read_vault "$password") || return 1
 
-  local updated
-  updated=$(_json_set "$vault_json" "$name" "$value")
-  _sk_write_vault "$password" "$updated"
+  local updated="$vault_json"
+  # updated=$(_json_set "$vault_json" "$name" "$value")
+
+  if [[ "$is_login" =~ [yY]$ ]]; then
+    updated=$(_json_set "$updated" "${name}_USER" "$user_value")
+    updated=$(_json_set "$updated" "${name}_PASS" "$pass_value")
+    _sk_write_vault "$password" "$updated"
+    echo -e "${GREEN} [OK]${RESET} Login Details Saved"
+  else
+    updated=$(_json_set "$updated" "${name}" "$value")
+    _sk_write_vault "$password" "$updated"
+    echo -e "${GREEN} [OK]${RESET} Key Details Saved"
+  fi
   # Remove the value in memory once saved
-  unset value updated vault_json password
-  echo -e "${GREEN}[OK]${RESET} Secret ${BOLD}$name${RESET} saved."
+  unset updated password pass_value user_value
 }
 
 # Helper functions for copying
+
+
+cmd_edit() {
+  local name="${1:-}"
+
+  [[ -z "$name" ]] && {
+    echo -e "${RED}[ERROR]${RESET} Usage: sk edit <NAME>" >&2
+    return 1
+  }
+
+  local password
+  password=$(_sk_prompt_password "Master password: ")
+
+  local vault_json
+  vault_json=$(_sk_read_vault "$password") || return 1
+
+  # Detect credential type
+  local existing_user
+  local existing_pass
+  local existing_value
+
+  existing_user=$(_json_get "$vault_json" "${name}_USER")
+  existing_pass=$(_json_get "$vault_json" "${name}_PASS")
+  existing_value=$(_json_get "$vault_json" "$name")
+
+  # Ensure key exists
+  if [[ -z "$existing_user" && -z "$existing_pass" && -z "$existing_value" ]]; then
+    echo -e "${RED}[ERROR]${RESET} Key '${name}' not found." >&2
+    return 1
+  fi
+
+  local updated="$vault_json"
+
+  # Login credentials
+  if [[ -n "$existing_user" || -n "$existing_pass" ]]; then
+    echo -e "${CYAN}[INFO]${RESET} Editing login credentials for '${BOLD}${name}${RESET}'"
+
+    local new_user
+    local new_pass
+
+    printf "${BOLD}New Username${DIM} (leave blank to keep current)${RESET}: "
+    read -r new_user
+
+    printf "${BOLD}New Password${DIM} (leave blank to keep current)${RESET}: "
+    read -rs new_pass
+    printf "\n"
+
+    [[ -z "$new_user" ]] && new_user="$existing_user"
+    [[ -z "$new_pass" ]] && new_pass="$existing_pass"
+
+    updated=$(_json_set "$updated" "${name}_USER" "$new_user") || {
+      echo -e "${RED}[ERROR]${RESET} Failed updating username."
+      return 1
+    }
+
+    updated=$(_json_set "$updated" "${name}_PASS" "$new_pass") || {
+      echo -e "${RED}[ERROR]${RESET} Failed updating password."
+      return 1
+    }
+
+    _sk_write_vault "$password" "$updated" || {
+      echo -e "${RED}[ERROR]${RESET} Failed writing vault."
+      return 1
+    }
+
+    echo -e "${GREEN}[OK]${RESET} Login credentials updated."
+
+  else
+    echo -e "${CYAN}[INFO]${RESET} Editing secret '${BOLD}${name}${RESET}'"
+
+    local new_value
+
+    printf "${BOLD}Enter new value:${RESET} "
+    read -rs new_value
+    printf "\n"
+
+    [[ -z "$new_value" ]] && {
+      echo -e "${RED}[ERROR]${RESET} Secret cannot be empty."
+      return 1
+    }
+
+    updated=$(_json_set "$updated" "$name" "$new_value") || {
+      echo -e "${RED}[ERROR]${RESET} Failed updating secret."
+      return 1
+    }
+
+    _sk_write_vault "$password" "$updated" || {
+      echo -e "${RED}[ERROR]${RESET} Failed writing vault."
+      return 1
+    }
+
+    echo -e "${GREEN}[OK]${RESET} Secret updated."
+  fi
+
+  unset \
+    password \
+    vault_json \
+    updated \
+    existing_user \
+    existing_pass \
+    existing_value \
+    new_user \
+    new_pass \
+    new_value
+}
+
+
+
 _sk_copy() {
   local input="$1"
   local clear_delay=15 # Seconds before clipboard clears automatically 
@@ -105,6 +236,8 @@ _sk_copy() {
 }
 cmd_get() {
   local name="${1:-}"
+  local user_name
+  local pass_value
   [[ -z "$name" ]] && {
     printf "${RED}[ERROR]${RESET} Usage: sk get <NAME>\n" >&2
     return 1
@@ -114,12 +247,28 @@ cmd_get() {
   password=$(_sk_prompt_password "Master password: ")
   local vault_json
   vault_json=$(_sk_read_vault "$password") || return 1
-
+  pass_value=$(_json_get "$vault_json" "${name}_PASS")
+  user_name=$(_json_get "$vault_json" "${name}_USER")
+  # If the field returned has the Password and Username? Then it has to be log in creds
+  if [[ -n "$user_name" && -n "$pass_value" ]]; then
+    echo -e "${CYAN} [Logins]${RESET} Username: ${BOLD} ${user_name} ${RESET}\n"
+    if _sk_copy "$pass_value"; then
+      echo -e "${GREEN} [OK] ${RESET} Password is copied to the clipboard"
+      echo -e "${BOLD} [WARN] ${RESET} The Copied Password will disappear in 15 seconds for safety reasons"
+    else
+      echo -e "${RED}[ERROR]${RESET} No Clipboard was found to copy your password!"
+      unset user_name pass_value password vault_json
+      return 1
+    fi
+    unset user_name pass_value password vault_json
+    return 0
+  fi
+  # NOw check , jsut in case this is just a plain secret insteasd of login creds
   local value
   value=$(_json_get "$vault_json" "$name")
 
   if [[ -z "$value" ]]; then
-    printf "${RED}[ERROR]${RESET} Key '${name}' not found.\n" >&2
+    echo -e "${RED}[ERROR]${RESET} Key '${name}' not found.\n"
     return 1
   fi
 
@@ -136,17 +285,16 @@ cmd_get() {
     unset value password
     return 1
   fi
-
-  unset value password
+  unset value password vault_json
 }
-cmd_list() {
+ cmd_list() {
   local password
   password=$(_sk_prompt_password "Master password: ")
 
   local vault_json
   vault_json=$(_sk_read_vault "$password") || return 1
 
-  local keys
+  local keys=()
   while IFS= read -r line; do
     [[ -n "$line" ]] && keys+=("$line")
   done < <(_json_keys "$vault_json")
@@ -156,15 +304,30 @@ cmd_list() {
     return
   fi
 
-  echo -e "\n${BOLD}${CYAN}Stored Secrets${RESET} ${DIM}(${#keys[@]} total)${RESET}\n"
+  local visible_count=0
+  for key in "${keys[@]}"; do
+    [[ -z "$key" ]] && continue
+    [[ "$key" =~ _PASS$ ]] && continue
+    ((visible_count++))
+  done
+
+  echo -e "\n${BOLD}${CYAN}Stored Credentials${RESET} ${DIM}(${visible_count} total)${RESET}\n"
   local masked="••••••••••••"
   for key in "${keys[@]}"; do
     [[ -z "$key" ]] && continue
-    echo -e "${GREEN}${RESET} $key : " "${DIM}$masked${RESET}"
-  done
-  # echo
-}
 
+    if [[ "$key" =~ _PASS$ ]]; then
+      continue
+    elif [[ "$key" =~ _USER$ ]]; then
+      #Formatting ?
+      local base_key="${key%_USER}"
+      echo -e " ${GREEN}${RESET} $base_key : ${DIM}[Login Details]${RESET}"
+    else
+      echo -e " ${GREEN}${RESET} $key : ${DIM}$masked${RESET}"
+    fi
+  done
+  unset password vault_json keys
+}
 cmd_remove() {
   local name="${1:-}"
   [[ -z "$name" ]] && {
@@ -178,10 +341,19 @@ cmd_remove() {
   local vault_json
   vault_json=$(_sk_read_vault "$password") || return 1
 
-  # Check it exists
+  local has_single=false
+  local has_login=false
+
+  # Now check for the standard key - api pair
   local value
   value=$(_json_get "$vault_json" "$name")
-  if [[ -z "$value" ]]; then
+  [[ -n "$value" ]] && has_single=true
+
+  local user_val
+  user_val=$(_json_get "$vault_json" "${name}_USER")
+  [[ -n "$user_val" ]] && has_login=true
+
+  if ! $has_single && ! $has_login; then
     echo -e "${RED}[ERROR]${RESET} Key '$name' not found." >&2
     return 1
   fi
@@ -193,10 +365,18 @@ cmd_remove() {
     return
   }
 
-  local updated
-  updated=$(_json_delete "$vault_json" "$name")
+  local updated="$vault_json"
+  if $has_single; then
+    updated=$(_json_delete "$updated" "$name")
+  fi
+  if $has_login; then
+    updated=$(_json_delete "$updated" "${name}_USER")
+    updated=$(_json_delete "$updated" "${name}_PASS")
+  fi
+
   _sk_write_vault "$password" "$updated"
   echo -e "${GREEN}[OK]${RESET} '$name' removed."
+  unset password vault_json updated
 }
 
 cmd_export() {
@@ -390,6 +570,7 @@ ${BOLD}${UNDERLINE}COMMANDS${RESET}
   ${GREEN}sk add${RESET} ${DIM}NAME${RESET}      Add or update a secret
   ${GREEN}sk get${RESET} ${DIM}NAME${RESET}      Decrypt and print a single secret
   ${GREEN}sk list${RESET}           List all secret names (values masked)
+  ${GREEN}sk edit${RESET} ${DIM}NAME${RESET}     Edit an existing secret or login
   ${GREEN}sk remove | rm ${RESET} ${DIM}NAME${RESET}   Delete a secret from the vault
   ${GREEN}sk rotate${RESET}         Change master password (re-encrypts vault)
   ${GREEN}sk destroy${RESET}        ${YELLOW}a${RESET} Permanently delete the vault
@@ -419,6 +600,7 @@ main() {
   add) cmd_add "$@" ;;
   get) cmd_get "$@" ;;
   list) cmd_list "$@" ;;
+  edit) cmd_edit "$@" ;;
   remove | rm) cmd_remove "$@" ;;
   # export) cmd_export "$@" ;;
   # load) cmd_load "$@" ;;
