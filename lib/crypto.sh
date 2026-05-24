@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -Eeuo pipefail #stop on errors, detect if there are used, but unassigned vars? and propagate the errors through...
 SECUREKEYS_DIR="${SECUREKEYS_DIR:-$HOME/.securekeys}"
 VAULT_FILE="$SECUREKEYS_DIR/vault.enc"
 SALT_FILE="$SECUREKEYS_DIR/.salt"

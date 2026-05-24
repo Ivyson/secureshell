@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -Eeuo pipefail
 # sk — SecureKeys CLI
 # Manage encrypted API keys/secrets Login Credebtials stored in an AES-256 vault
 #
