@@ -68,8 +68,8 @@ sk_init_vault() {
 _sk_encrypt() {
   local password="$1"
   local salt
-  salt=$(<"$SALT_FILE") 
-  
+  salt=$(<"$SALT_FILE")
+
   export SK_PASS="${password}${salt}"
   openssl enc -aes-256-cbc -a -pbkdf2 -iter 100000 -pass env:SK_PASS 2>/dev/null
   unset SK_PASS
@@ -79,7 +79,7 @@ _sk_decrypt() {
   local password="$1"
   local salt
   salt=$(<"$SALT_FILE")
-  
+
   export SK_PASS="${password}${salt}"
   openssl enc -d -aes-256-cbc -a -pbkdf2 -iter 100000 -pass env:SK_PASS 2>/dev/null
   unset SK_PASS
@@ -101,7 +101,7 @@ _sk_read_vault() {
     return 1
   fi
   local plain
-  plain=$(_sk_decrypt "$password" < "$VAULT_FILE" 2>/dev/null)
+  plain=$(_sk_decrypt "$password" <"$VAULT_FILE" 2>/dev/null)
   if [[ -z "$plain" ]]; then
     echo -e "${RED}[ERROR]${RESET} Decryption failed — wrong password or corrupted vault." >&2
     return 1
@@ -113,10 +113,10 @@ _sk_write_vault() {
   local password="$1"
   local json="$2"
   local tmp
-  
+
   # Have the temp file in same directory for atomic write?
   tmp=$(mktemp "$SECUREKEYS_DIR/vault.tmp.XXXXXX") || return 1
-  
+
   if echo "$json" | _sk_encrypt "$password" >"$tmp" 2>/dev/null; then
     mv "$tmp" "$VAULT_FILE"
     chmod 600 "$VAULT_FILE"
@@ -124,6 +124,38 @@ _sk_write_vault() {
     rm -f "$tmp"
     return 1
   fi
+}
+
+_sk_copy() {
+  local input="$1"
+  local clear_delay=15 # Seconds before clipboard clears automatically
+
+  # 1. Wayland (nEED TO BE TESTED. STRAIGHT FROM DOCS) : https://man.archlinux.org/man/wl-copy.1
+  if [[ -n "$WAYLAND_DISPLAY" ]] && command -v wl-copy >/dev/null 2>&1; then
+    # --paste-once: Serve the selection to only one requester and then exit
+    echo -n "$input" | wl-copy --paste-once && return 0
+
+  # 2. macOS
+  elif command -v pbcopy >/dev/null 2>&1; then
+    echo -n "$input" | pbcopy
+    # Background a task to clear the clipboard after delay ste above!
+    (sleep "$clear_delay" && printf "" | pbcopy) >/dev/null 2>&1 &
+    return 0
+
+  # 3. Fedora
+  elif command -v xclip >/dev/null 2>&1; then
+    echo -n "$input" | xclip -selection clipboard
+    (sleep "$clear_delay" && echo -n "" | xclip -selection clipboard) >/dev/null 2>&1 &
+    return 0
+
+    # 4. WSL (Windows ) Not tested at all, Check out: https://superuser.com/questions/1618537/use-clipboard-through-wsl
+  elif command -v clip.exe >/dev/null 2>&1; then
+    echo -n "$input" | clip.exe
+    (sleep "$clear_delay" && echo -n "" | clip.exe) >/dev/null 2>&1 &
+    return 0
+  fi
+
+  return 1
 }
 
 _json_get() {

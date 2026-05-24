@@ -20,10 +20,8 @@
 
 # SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT_DIR=~/.local/lib/securekeys/crypto.sh
-INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}" 
-LIB_DIR="$HOME/.local/lib/securekeys" 
-
-
+INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
+LIB_DIR="$HOME/.local/lib/securekeys"
 
 if [[ -f "$SCRIPT_DIR" ]]; then
   source "$SCRIPT_DIR"
@@ -31,10 +29,41 @@ else
   echo -e "${RED}[ERROR] ${RESET} Could not locate the library responsible for encryption. Check the path ${SCRIPT_DIR}"
   exit 1
 fi
-#Commands
 
 cmd_init() {
   sk_init_vault
+}
+
+msg() {
+  local type="$1"
+  shift
+
+  local color label
+
+  case "$type" in
+  info)
+    color="$CYAN"
+    label="[INFO]"
+    ;;
+  ok)
+    color="$GREEN"
+    label="[OK]"
+    ;;
+  warn)
+    color="$YELLOW"
+    label="[WARN]"
+    ;;
+  error)
+    color="$RED"
+    label="[ERROR]"
+    ;;
+  *)
+    color="$RESET"
+    label="[LOG]"
+    ;;
+  esac
+
+  printf "%b%s%b %s\n" "$color" "$label" "$RESET" "$*" >&2
 }
 
 cmd_add() {
@@ -49,7 +78,6 @@ cmd_add() {
     return 1
   }
 
-  # Validate key name
   if [[ ! "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
     echo -e "${RED}[ERROR]${RESET} Key name must be a valid shell variable (letters, digits, underscores)." >&2
     return 1
@@ -93,7 +121,6 @@ cmd_add() {
   # Remove the value in memory once saved
   unset updated password pass_value user_value
 }
-
 
 cmd_edit() {
   local name="${1:-}"
@@ -198,39 +225,6 @@ cmd_edit() {
     new_value
 }
 
-
-
-_sk_copy() {
-  local input="$1"
-  local clear_delay=15 # Seconds before clipboard clears automatically 
-
-  # 1. Wayland (nEED TO BE TESTED. STRAIGHT FROM DOCS) : https://man.archlinux.org/man/wl-copy.1
-  if [[ -n "$WAYLAND_DISPLAY" ]] && command -v wl-copy >/dev/null 2>&1; then
-    # --paste-once: Serve the selection to only one requester and then exit
-    echo -n "$input" | wl-copy --paste-once && return 0
-
-  # 2. macOS
-  elif command -v pbcopy >/dev/null 2>&1; then
-    echo -n "$input" | pbcopy
-    # Background a task to clear the clipboard after delay ste above!
-    (sleep "$clear_delay" && printf "" | pbcopy) >/dev/null 2>&1 &
-    return 0
-
-  # 3. Fedora
-  elif command -v xclip >/dev/null 2>&1; then
-    echo -n "$input" | xclip -selection clipboard 
-    (sleep "$clear_delay" && echo -n "" | xclip -selection clipboard) >/dev/null 2>&1 &
-    return 0
-
-    # 4. WSL (Windows ) Not tested at all, Check out: https://superuser.com/questions/1618537/use-clipboard-through-wsl
-  elif command -v clip.exe >/dev/null 2>&1; then
-    echo -n "$input" | clip.exe
-    (sleep "$clear_delay" && echo -n "" | clip.exe) >/dev/null 2>&1 &
-    return 0
-  fi
-
-  return 1
-}
 cmd_get() {
   local name="${1:-}"
   local user_name
@@ -284,7 +278,7 @@ cmd_get() {
   fi
   unset value password vault_json
 }
- cmd_list() {
+cmd_list() {
   local password
   password=$(_sk_prompt_password "Master password: ")
 
@@ -292,13 +286,19 @@ cmd_get() {
   vault_json=$(_sk_read_vault "$password") || return 1
 
   local keys=()
+  local jq_output
+  if ! jq_output=$(_json_keys "$vault_json"); then
+    echo -e "${RED} [ERROR] Failed to parse the json Vault${RESET}"
+    return 1
+  fi
+
   while IFS= read -r line; do
     [[ -n "$line" ]] && keys+=("$line")
-  done < <(_json_keys "$vault_json")
+  done <<<"$jq_output"
 
   if [[ ${#keys[@]} -eq 0 || (${#keys[@]} -eq 1 && -z "${keys[0]}") ]]; then
     echo -e "${DIM}Vault is empty. Add a secret with: ${BOLD}sk add MY_API_NAME ${RESET}"
-    return
+    return 0
   fi
 
   local visible_count=0
@@ -605,7 +605,7 @@ main() {
   rotate) cmd_rotate "$@" ;;
   destroy) cmd_destroy "$@" ;;
   status) cmd_status "$@" ;;
-  uninstall) cmd_uninstall "$@";;
+  uninstall) cmd_uninstall "$@" ;;
   help | --help | -h) cmd_help ;;
   *)
     echo -e "${RED}[ERROR]${RESET} Unknown command: $cmd" >&2
